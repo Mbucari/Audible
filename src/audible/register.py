@@ -1,32 +1,14 @@
-import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 
-
-def get_random_device_serial() -> str:
-    """Generates and prepares a random uuid version 4.
-    
-    Using a random serial prevents from unregister devices by other users
-    with same `device_serial`.
-    """
-    return uuid.uuid4().hex
+from .login import build_client_id
 
 
-def register(access_token: str,
-             domain: str,
-             serial: Optional[str] = None) -> Dict[str, Any]:
-    """Registers a dummy Audible device. 
-
-    Args:
-        access_token: An access token fetches from :func:`audible.auth.login`.
-        domain: The top level domain of the requested Amazon server (e.g. com).
-    
-    Returns:
-        Additional authentication data needed for access Audible API.
-    """
-    body = {
+def _build_registration_body(domain: str, serial: str) -> Dict:
+    """Builds the registration body except the auth_data"""
+    return {
         "requested_token_type":
             ["bearer", "mac_dms", "website_cookies",
              "store_authentication_cookie"],
@@ -34,28 +16,21 @@ def register(access_token: str,
             "website_cookies": [],
             "domain": f".amazon.{domain}"},
         "registration_data": {
-            "domain":
-                "Device",
-            "app_version":
-                "3.26.1",
-            "device_serial":
-                serial or get_random_device_serial(),
-            "device_type":
-                "A2CZJZGLK2JJVM",
+            "domain": "Device",
+            "app_version": "3.26.1",
+            "device_serial": serial,
+            "device_type": "A2CZJZGLK2JJVM",
             "device_name": (
                 "%FIRST_NAME%%FIRST_NAME_POSSESSIVE_STRING%%DUPE_"
                 "STRATEGY_1ST%Audible for iPhone"),
-            "os_version":
-                "13.5.1",
-            "device_model":
-                "iPhone",
-            "app_name":
-                "Audible"},
-        "auth_data": {
-            "access_token": access_token},
+            "os_version": "13.5.1",
+            "device_model": "iPhone",
+            "app_name": "Audible"},
         "requested_extensions": ["device_info", "customer_info"]
     }
 
+
+def _register(body: Dict, domain: str) -> Dict[str, Any]:
     resp = httpx.post(f"https://api.amazon.{domain}/auth/register", json=body)
 
     resp_json = resp.json()
@@ -94,9 +69,50 @@ def register(access_token: str,
     }
 
 
+def register(access_token: str, domain: str, serial: str) -> Dict[str, Any]:
+    """Register a new Audible device with access token. 
+
+    Args:
+        access_token: An access token fetches from :func:`audible.auth.login`.
+        domain: The top level domain of the requested Amazon server (e.g. com).
+    
+    Returns:
+        Additional authentication data needed for access Audible API.
+    """
+    body = _build_registration_body(domain=domain, serial=serial)
+    body["auth_data"] = {"access_token": access_token}
+    return _register(body=body, domain=domain)
+
+
+def register_auth_code(authorization_code: str,
+                       code_verifier: str,
+                       domain: str,
+                       serial: str) -> Dict[str, Any]:
+    """Register a new Audible device with authorization code. 
+
+    Args:
+        authorization_code: Login in `auth_code` mode to get the code.
+        code_verifier: The code verifier used at login to create the code challenge.
+        domain: The top level domain of the requested Amazon server (e.g. com).
+        serial: The device serial used at login.
+    
+    Returns:
+        Additional authentication data needed for access Audible API.
+    """
+    body = _build_registration_body(domain=domain, serial=serial)
+    body["auth_data"] = {
+        "client_id" : build_client_id(serial),
+        "authorization_code" : authorization_code,
+        "code_verifier" : code_verifier,
+        "code_algorithm" : "SHA-256",
+        "client_domain" : "DeviceLegacy"
+    }
+    return _register(body=body, domain=domain)
+
+
 def deregister(access_token: str, domain: str,
                deregister_all: bool = False) -> Dict[str, Any]:
-    """Deregisters a dummy Audible device.
+    """Deregisters a previous registered Audible device.
     
     Note:
         Except of the ``access_token``, all authentication data will loose 
